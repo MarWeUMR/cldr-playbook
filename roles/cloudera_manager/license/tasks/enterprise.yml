@@ -13,7 +13,6 @@
 # limitations under the License.
 
 ---
-
 - name: Get current Cloudera license status
   cm_api:
     endpoint: /cm/license
@@ -44,8 +43,6 @@
     --header 'Content-Type:multipart/form-data'
     --form license=@/tmp/license.txt
     {{ license_response.url }}
-  args:
-    warn: False
   register: response
   failed_when: "'owner' not in response.stdout"
   when: license_not_installed
