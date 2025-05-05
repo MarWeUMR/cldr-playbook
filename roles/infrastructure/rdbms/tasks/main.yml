@@ -15,7 +15,7 @@
 ---
 - name: Include database type specific variables
   include_vars:
-    file: "{{ database_type }}-{{ ansible_os_family }}.yml"
+    file: "{{ database_type }}.yml"
 
 - name: Include database type and OS specific variables
   include_vars:
