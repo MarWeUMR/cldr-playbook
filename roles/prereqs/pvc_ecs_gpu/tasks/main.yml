@@ -19,8 +19,7 @@
 ---
 # TODO: Add Nvidia drivers
 
-
-# https://docs.nvidia.com/datacenter/cloud-native/edge/latest/nvidia-gpu-with-device-edge.html#installing-the-nvidia-container-toolkit 
+# https://docs.nvidia.com/datacenter/cloud-native/edge/latest/nvidia-gpu-with-device-edge.html#installing-the-nvidia-container-toolkit
 
 # dnf config-manager --add-repo=https://developer.download.nvidia.com/compute/cuda/repos/rhel8/x86_64/cuda-rhel8.repo
 # sudo dnf module install nvidia-driver:525
@@ -39,34 +38,35 @@
   get_url:
     url: "https://developer.download.nvidia.com/compute/cuda/repos/rhel{{ ansible_distribution_major_version }}/x86_64/cuda-rhel{{ ansible_distribution_major_version }}.repo"
     dest: /etc/yum.repos.d/
-    mode: '0644'
+    mode: "0644"
 
 - name: Install Nvidia Container repository
   get_url:
-    url: "https://nvidia.github.io/libnvidia-container/rhel{{ ansible_distribution_version }}/libnvidia-container.repo"
+    url: https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo
+    # url: "https://nvidia.github.io/libnvidia-container/rhel{{ ansible_distribution_version }}/libnvidia-container.repo"
     dest: /etc/yum.repos.d/
-    mode: '0644'
+    mode: "0644"
 
-- name: Enable Nvidia module 
+- name: Enable Nvidia module
   dnf:
-    name: '@nvidia-driver:525'
+    name: "@nvidia-driver:525"
     state: present
 
-- name: Install nvidia-fabric-manager 
+- name: Install nvidia-fabric-manager
   dnf:
-    name: 'nvidia-fabric-manager'
+    name: "nvidia-fabric-manager"
     state: present
 
-- name: Enable Nvidia libnvidia-nscq-525 
+- name: Enable Nvidia libnvidia-nscq-525
   dnf:
-    name: 'libnvidia-nscq-525'
+    name: "libnvidia-nscq-525"
     state: present
 
 - name: Blacklist nouveau
   lineinfile:
     path: /etc/modprobe.d/nouveau-blacklist.conf
-    regexp: 'blacklist nouveau'
-    line: 'blacklist nouveau'
+    regexp: "blacklist nouveau"
+    line: "blacklist nouveau"
     create: true
 
 - name: Dracut
@@ -82,7 +82,8 @@
     name: nvidia-persistenced
     enabled: yes
 
-- name: Install nvidia-container-toolkit 
+- name: Install nvidia-container-toolkit
   dnf:
     name: nvidia-container-toolkit
     state: present
+
