@@ -13,7 +13,6 @@
 # limitations under the License.
 
 ---
-
 - name: Group hosts by whether TLS is enabled
   hosts: all
   gather_facts: no
@@ -25,13 +24,13 @@
   become: yes
   gather_facts: no
   tasks:
-  - name: Create temp dir
-    file:
-     path: "{{ local_temp_dir }}/"
-     state: directory
-     mode: 0777
-     group: root
-     owner: root
+    - name: Create temp dir
+      file:
+        path: "{{ local_temp_dir }}/"
+        state: directory
+        mode: 0777
+        group: root
+        owner: root
   tags:
     - os
     - tmp_dir
@@ -73,18 +72,18 @@
   hosts: kts_servers
   become: yes
   roles:
-    - { role: prereqs/python2 , when: encryption_activated | default('false') }
+    - { role: prereqs/python2, when: encryption_activated | default('false') }
   tags:
     - python
+# - name: Pre-requisites on ECS Nodes for GPU
+#   hosts: pvc_hosts
+#   gather_facts: false
+#   roles:
+#     - role: prereqs/pvc_ecs_gpu
+#       when:
+#         - pvc_type == "ECS"
+#         - ansible_os_family == 'RedHat'
+#         - ansible_distribution_major_version | int >= 8
+#   tags:
+#     - pvc
 
-- name: Pre-requisites on ECS Nodes for GPU
-  hosts: pvc_hosts
-  gather_facts: false
-  roles: 
-    - role: prereqs/pvc_ecs_gpu
-      when: 
-        - pvc_type == "ECS"
-        - ansible_os_family == 'RedHat'
-        - ansible_distribution_major_version | int >= 8
-  tags:
-    - pvc
