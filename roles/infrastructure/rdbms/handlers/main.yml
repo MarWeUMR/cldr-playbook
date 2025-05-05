@@ -13,8 +13,5 @@
 # limitations under the License.
 
 ---
-
 - name: yum clean metadata
   command: yum clean metadata
-  args:
-    warn: no
