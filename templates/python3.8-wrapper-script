@@ -1,0 +1,181 @@
+#!/bin/bash
+                                                                                                                                                                                                                                                                                            
+# Env variable PYTHONBIN can be used to override
+# the python binary selection. For example, set
+# it as
+#   PYTHONBIN=/usr/local/bin/python3.8-mylocal
+# to use a custom python binary.  This can be
+# set in the cloudera-scm-agent systemd service
+# definition.
+#
+# If the python home directory is not the same
+# as compiled into the python executeable,
+# then also pass in the PYTHONHOME environment
+# variable.  Same for PYTHONPATH.
+                                                                                                                                                                                                                                                                                            
+# Some services change the IFS indiscriminately.
+unset IFS
+                                                                                                                                                                                                                                                                                            
+# Figure out where this script is running.
+BIN_DIR=$(dirname "$0")
+BIN_DIR=$(realpath "$BIN_DIR")
+AGENT_DIR=$(builtin cd -- "$BIN_DIR/.." && pwd)
+                                                                                                                                                                                                                                                                                            
+# Checking for the flag to detect python clean
+# up and then setting python2 environment forcefully
+# when flag is detected to make sure python2
+# environment is set for required services when
+# CM is running on python3 and CDH runtime is python2.
+# Incase of running a script out of the
+# $AGENT_DIR/service/* directory,
+# switching to the python3 interpreter.
+                                                                                                                                                                                                                                                                                            
+# Base path for the cm-agent/service directory
+SERVICE_BASE_PATH="$AGENT_DIR/service/"
+PYTHON_FILE_PATH=$(realpath "$1")
+                                                                                                                                                                                                                                                                                            
+if [ "$CM_PYTHON2_BEHAVIOR" == '1' ] && [[ "$PYTHON_FILE_PATH" != ${SERVICE_BASE_PATH}* ]]; then
+  exec /usr/bin/python2 "$@"
+fi
+                                                                                                                                                                                                                                                                                            
+# Remove the BIN_DIR from PATH if it is there.
+PATH=$(echo $PATH | sed -e "s@${BIN_DIR}:@@")
+
+# This function has also been written in agents/cmf/service/common/cloudera-config.sh, any changes made to the below
+# method here, would need to be replicated in the cloudera-config.sh file as well, please refer: OPSAPS-72089
+get_os_based_python3_version() {
+  if [[ -f /etc/os-release ]]; then
+    source /etc/os-release
+    ARCHITECTURE=$(uname -m)
+    if [[ "$ID" == "rhel" ]] && [[ "$VERSION_ID" =~ ^8 ]] && [[ "$ARCHITECTURE" == "aarch64" ]]; then
+      PYTHON_VERSION=python3.9
+    elif [[ "$VERSION_ID" =~ ^9 ]] && [[ "$ID" == "rhel" || "$ID" == "ol" || "$ID" == "rocky" ]]; then
+      PYTHON_VERSION=python3.8
+    elif [[ "$ID" == "sles" ]] && [[ "$VERSION_ID" == "15.4" || "$VERSION_ID" == "15.5" ]]; then
+      PYTHON_VERSION=python3.10
+    elif [[ "$ID" == "ubuntu" && "$VERSION_ID" == "22.04" ]]; then
+        PYTHON_VERSION=python3.10
+    else
+      PYTHON_VERSION=python3.8
+    fi
+  else
+    PYTHON_VERSION=python3.8
+  fi
+
+  echo "$PYTHON_VERSION"
+}
+
+get_python3_executable() {
+  # Python3 version whose executable we will search
+  version="$1"
+  PYTHON_VERSION_DOT="${version#python}"
+  PYTHON_VERSION_NO_DOT="${PYTHON_VERSION_DOT//./}"
+
+  # List of directories to check for the Python executable
+  PYTHON_DIRS=("/usr/local/bin" "/bin" "/usr/bin" "/opt/rh/rh-${PYTHON_VERSION_NO_DOT}/root/usr/bin")
+
+  for dir in "${PYTHON_DIRS[@]}"; do
+    # Construct the full path to the executable
+    PYTHON_EXE="$dir/$version"
+    # Check if the executable exists and is executable
+    if [ -x "$PYTHON_EXE" ]; then
+      echo "$PYTHON_EXE"
+      return 0
+    fi
+  done
+
+  # If no executable was found, print an error message and exit with status 1
+  echo "Python 3.x executable not found in any of the specified directories." >&2
+  return 1
+}
+
+get_highest_python3_version_supported() {
+# List of Python versions to check, in descending order
+    python3_version=""
+    PYTHON_VERSIONS=("python3.9" "python3.8")
+
+    # Iterate over the Python versions
+    for version in "${PYTHON_VERSIONS[@]}"; do
+        # Set the short version number
+        PYTHON_VERSION_DOT="${version#python}"
+        PYTHON_VERSION_NO_DOT="${PYTHON_VERSION_DOT//./}"
+
+        # List of directories to check for the Python executable
+        PYTHON_DIRS=("/usr/local/bin" "/bin" "/usr/bin" "/opt/rh/rh-${PYTHON_VERSION_NO_DOT}/root/usr/bin")
+
+        # Iterate over the directories
+        for dir in "${PYTHON_DIRS[@]}"; do
+            # Construct the full path to the executable
+            PYTHON_EXE="$dir/$version"
+            # Check if the executable exists and is executable
+            if [ -x "$PYTHON_EXE" ]; then
+                python3_version="$version"
+                break 2  # Exit both loops as we've found the highest version
+            fi
+        done
+    done
+
+    echo "$python3_version"
+}
+
+if [ "$CM_PYTHON3_BEHAVIOR" == '1' ] && [[ "$PYTHON_FILE_PATH" != ${SERVICE_BASE_PATH}* ]]; then
+  os_based_python_version=$(get_os_based_python3_version)
+  exec $(get_python3_executable "$os_based_python_version") "$@"
+fi
+
+# Remove the BIN_DIR from PATH if it is there.
+PATH=$(echo $PATH | sed -e "s@${BIN_DIR}:@@")
+
+PYTHON_VERSION=""
+PYTHON_EXE=""
+
+if [ -n "$PYTHONBIN" ]; then
+    if [ ! -x "$PYTHONBIN" ]; then
+       echo "The specified $PYTHONBIN path does not exist or is not executable."
+       exit 1
+    fi
+    #This will ensure that PYTHON_VERSION contains only the major and minor version  and NOT the patch version.
+    PYTHON_VERSION="python$("$PYTHONBIN" --version 2>&1 | awk '{print $2}' | cut -d. -f1,2)"
+    PYTHON_EXE="$PYTHONBIN"
+    PYTHON_BINDIR=$(dirname "$PYTHONBIN")
+    PYTHON_DIR=$(builtin cd -- "$PYTHON_BINDIR/.." && pwd)
+    if [ -e "$PYTHON_DIR/lib/lib$PYTHON_VERSION.so" ]; then
+        export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$PYTHON_DIR/lib"
+    fi
+    PATH=$PATH:$PYTHON_BINDIR
+else
+    if [[ -f /etc/os-release ]]; then
+        source /etc/os-release
+        ARCH=$(uname -m)
+        if [[ "$ID" == "rhel" ]] && [[ "$VERSION_ID" =~ ^8 ]] && [[ "$ARCH" == "aarch64" ]]; then
+          PYTHON_VERSION=python3.9
+        elif [[ "$VERSION_ID" =~ ^9 ]] && [[ "$ID" == "rhel" || "$ID" == "ol" || "$ID" == "rocky" ]]; then
+          PYTHON_VERSION=python3.8
+        elif [[ "$ID" == "sles" ]] && [[ "$VERSION_ID" == "15.4" || "$VERSION_ID" == "15.5" ]]; then
+          PYTHON_VERSION=python3.10
+        elif [[ "$ID" == "ubuntu" && "$VERSION_ID" == "22.04" ]]; then
+            PYTHON_VERSION=python3.10
+        elif [[ "$ID" == "rhel" && "$VERSION_ID" =~ ^8 && "$ARCH" == "x86_64" ]]; then
+          PYTHON_VERSION=$(get_highest_python3_version_supported)
+        else
+          PYTHON_VERSION=python3.8
+        fi
+      else
+        PYTHON_VERSION=python3.8
+    fi
+
+    PYTHON_EXE=$(get_python3_executable "$PYTHON_VERSION")
+fi
+
+
+# Setup the python environment
+export PYTHONPATH="$AGENT_DIR/lib/$PYTHON_VERSION/site-packages:$AGENT_DIR/thirdparty:$PYTHONPATH"
+export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:$AGENT_DIR/lib"
+PATH=$BIN_DIR:$PATH
+
+# Remove dups in PATHs
+PYTHONPATH=$(printf %s "$PYTHONPATH" | awk -vRS=: '!a[$0]++' | paste -s -d:)
+LD_LIBRARY_PATH=$(printf %s "$LD_LIBRARY_PATH" | awk -vRS=: '!a[$0]++' | paste -s -d:)
+PATH=$(printf %s "$PATH" | awk -vRS=: '!a[$0]++' | paste -s -d:)
+
+exec $PYTHON_EXE "$@"

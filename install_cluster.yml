@@ -13,14 +13,15 @@
 # limitations under the License.
 
 ---
-
 - name: Ensure that the agents are heartbeating
   hosts: cloudera_manager:cluster
   gather_facts: yes
   any_errors_fatal: yes
   roles:
-    - { role: cloudera_manager/wait_for_heartbeat,
-        when: cloudera_manager_agent_wait_for_heartbeat | default(True) }
+    - {
+        role: cloudera_manager/wait_for_heartbeat,
+        when: cloudera_manager_agent_wait_for_heartbeat | default(True),
+      }
   tags:
     - heartbeat
 
@@ -40,6 +41,19 @@
     - deployment/services/mgmt
   tags:
     - mgmt
+
+- name: Inject python38 hack
+  hosts: cluster_master_nodes[1]
+  gather_facts: no
+  tasks:
+    - name: Deploy custom Python version configuration file from template
+      ansible.builtin.template:
+        src: templates/cm-agent/python3.8-wrapper-script
+        dest: /opt/cloudera/cm-agent/bin/python3.8
+        owner: root
+        group: root
+        mode: "0755"
+        backup: true
 
 - name: Deploy clusters
   hosts: localhost
