@@ -13,6 +13,37 @@
 # limitations under the License.
 
 ---
+- name: Modify system files on non RHEL machines
+  hosts: all,!reverse_proxy,!krb5_server,!ansible_controller
+  gather_facts: true
+  become: true
+  tasks:
+    - name: Backup '/etc/almalinux-release'
+      ansible.builtin.copy:
+        src: /etc/almalinux-release
+        dest: /etc/almalinux-release.bak
+        remote_src: true
+        mode: "0644"
+
+    - name: Append line to '/etc/almalinux-release'
+      ansible.builtin.lineinfile:
+        path: /etc/almalinux-release
+        line: 'ID_LIKE="rhel"'
+        create: true
+        mode: "0644"
+
+    - name: Backup '/usr/lib/os-release'
+      ansible.builtin.copy:
+        src: /usr/lib/os-release
+        dest: /usr/lib/os-release.bak
+        remote_src: true
+        mode: "0644"
+
+    - name: Replace 'ID' field in '/usr/lib/os-release'
+      ansible.builtin.replace:
+        path: /usr/lib/os-release
+        regexp: "^ID=.*"
+        replace: 'ID="rhel"'
 
 - name: Install Cloudera Manager daemons
   hosts: cloudera_manager, cluster
@@ -81,5 +112,4 @@
   hosts: cloudera_manager
   gather_facts: no
   roles:
-    - { role: cloudera_manager/fix_ipa , when: free_ipa | default('false') }
-
+    - { role: cloudera_manager/fix_ipa, when: free_ipa | default('false') }
