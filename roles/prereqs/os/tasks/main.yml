@@ -13,7 +13,6 @@
 # limitations under the License.
 
 ---
-
 - name: Include variables
   include_vars:
     file: "{{ ansible_os_family }}.yml"
@@ -36,7 +35,6 @@
     loop_var: flag
   when: not((ansible_virtualization_type == "docker" or ansible_virtualization_type == "container") and ansible_virtualization_role == "guest")
 
-
 - name: Populate service facts
   service_facts:
 
@@ -48,6 +46,22 @@
   when: "item + '.service' in ansible_facts.services"
   with_items: "{{ unnecessary_services }}"
   ignore_errors: yes
+
+- name: Ensure DNF [main] options are set
+  ansible.builtin.ini_file:
+    path: /etc/dnf/dnf.conf
+    section: main
+    option: "{{ item.key }}"
+    value: "{{ item.value }}"
+    no_extra_spaces: yes
+  loop:
+    - { key: fastestmirror, value: "True" }
+    - { key: max_parallel_downloads, value: "10" }
+    - { key: gpgcheck, value: "True" }
+    - { key: installonly_limit, value: "3" }
+    - { key: clean_requirements_on_remove, value: "True" }
+    - { key: best, value: "False" }
+    - { key: skip_if_unavailable, value: "True" }
 
 - name: Install DNS utils package
   package:
@@ -89,7 +103,7 @@
 - name: Disable nscd caches for services 'passwd', 'group', 'netgroup'
   replace:
     path: /etc/nscd.conf
-    regexp: '^(.*enable-cache.*(passwd|group|netgroup).*)yes$'
+    regexp: "^(.*enable-cache.*(passwd|group|netgroup).*)yes$"
     replace: '\1no'
   notify:
     - restart nscd
@@ -110,3 +124,4 @@
     enabled: yes
     masked: no
   ignore_errors: true
+
