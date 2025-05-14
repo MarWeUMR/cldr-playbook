@@ -13,6 +13,19 @@
 # limitations under the License.
 
 ---
+# - name: Inject python38 hack
+#   hosts: cluster_master_nodes[1]
+#   gather_facts: no
+#   tasks:
+#     - name: Deploy custom Python version configuration file from template
+#       ansible.builtin.template:
+#         src: templates/python3.8-wrapper-script
+#         dest: /opt/cloudera/cm-agent/bin/python3.8
+#         owner: root
+#         group: root
+#         mode: "0755"
+#         backup: true
+
 - name: Install Cloudera Manager daemons
   hosts: cloudera_manager, cluster
   become: yes
