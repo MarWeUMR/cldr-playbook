@@ -35,31 +35,75 @@
     - kerberos
     - tls
 
-- name: Install FreeIPA server
-  hosts: krb5_server
-  become: yes
+- name: Install Kerberos Server
+  hosts: "krb5_server"
+  gather_facts: true
+  become: true
+  vars:
+    state: present
+    ipaserver_realm: "{{ krb5_realm }}"
+    ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
+    ipaserver_setup_firewalld: "no"
+    ipaserver_packages_dns: ["ipa-server-dns"]
+    ipaserver_setup_dns: true
+    ipaserver_allow_zone_overlap: true
+    ipaserver_auto_forwarders: true
+    ipaserver_auto_reverse: true
+    ipaserver_packages: ["ipa-server", "python3-libselinux"]
   roles:
-    - role: freeipa.ansible_freeipa.ipaserver
-      state: present
-      ipaserver_realm: "{{ krb5_realm }}"
-      ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
-      ipaserver_setup_firewalld: "no"
-      when: "krb5_kdc_type == 'Red Hat IPA'"
-  tags:
-    - security
-    - kerberos
-    - tls
+    - role: cloudera.cluster.infrastructure.krb5_server
 
+- name: Setup KRB5 clients
+  hosts: cloudera_manager:cluster
+  gather_facts: true
+  become: true
+  vars:
+    ipaclient_packages: ["ipa-client", "python3-libselinux"]
+    state: present
+    ipaserver_realm: "{{ krb5_realm }}"
+    ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
+    ipaclient_servers: "{{ groups['krb5_server'] }}"
+    ipaclient_configure_dns_resolver: true
+    ipaclient_dns_servers:
+      - "{{ hostvars[groups['krb5_server'][0]]['ansible_default_ipv4']['address'] }}"
+      - 8.8.8.8
+  roles:
+    - role: cloudera.cluster.infrastructure.krb5_client
+      when: krb5_kdc_host is defined or 'krb5_server' in groups
+# - name: Install FreeIPA server
+#   hosts: krb5_server
+#   become: yes
+#   roles:
+#     - role: freeipa.ansible_freeipa.ipaserver
+#       state: present
+#       ipaserver_realm: "{{ krb5_realm }}"
+#       ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
+#       ipaserver_setup_firewalld: "no"
+#       ipaserver_packages_dns: ["ipa-server-dns"]
+#       ipaserver_setup_dns: true
+#       ipaserver_allow_zone_overlap: true
+#       ipaserver_auto_forwarders: true
+#       ipaserver_auto_reverse: true
+#       when: "krb5_kdc_type == 'Red Hat IPA'"
+#   tags:
+#     - security
+#     - kerberos
+#     - tls
+#
 - name: Setup FreeIPA clients
   hosts: cloudera_manager:cluster
   become: yes
-  roles:
-    - role: freeipa.ansible_freeipa.ipaclient
-      state: present
-      ipaserver_realm: "{{ krb5_realm }}"
-      ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
-      ipaclient_servers: "{{ groups['krb5_server'] }}"
-      when: "krb5_kdc_type == 'Red Hat IPA' and 'krb5_server' in groups"
+  #   roles:
+  #     - role: freeipa.ansible_freeipa.ipaclient
+  #       state: present
+  #       ipaserver_realm: "{{ krb5_realm }}"
+  #       ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
+  #       ipaclient_servers: "{{ groups['krb5_server'] }}"
+  #       ipaclient_configure_dns_resolver: true
+  #       ipaclient_dns_servers:
+  #         - "{{ hostvars[groups['krb5_server'][0]]['ansible_default_ipv4']['address'] }}"
+  #         - 8.8.8.8
+  #       when: "krb5_kdc_type == 'Red Hat IPA' and 'krb5_server' in groups"
   tasks:
     - name: Set sssd to enumerate users and groups
       lineinfile:
@@ -75,8 +119,7 @@
       service:
         name: sssd
         state: restarted
-  tags:
-    - security
-    - kerberos
-    - tls
-
+#   tags:
+#     - security
+#     - kerberos
+#     - tls

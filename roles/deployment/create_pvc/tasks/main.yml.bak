@@ -18,6 +18,8 @@
 #     timeout: "{{ cluster_restart_timeout | default(3000) }}"
 
 - name: Get hosts details
+  delegate_to: "{{ groups.cloudera_manager | first }}"
+  run_once: true
   cm_api:
     endpoint: /hosts
     method: GET
@@ -25,6 +27,7 @@
   register: host_details
 
 - name: DEBUG - Get hosts
+
   debug:
     msg: "{{ host_details }}"
   when: debug | default(false)
@@ -43,6 +46,8 @@
 
 ### Delete Experience cluster if already existing ###
 - name: Check about Experience cluster
+  delegate_to: "{{ groups.cloudera_manager | first }}"
+  run_once: true
   cm_api:
     endpoint: /clusters
     method: GET
@@ -57,87 +62,95 @@
 - set_fact:
     experience_already_exists: "{{ false if experience_cluster_name == '' else true }}"
 
-- meta: end_play
-
-- name: Kill any lingering rke2/k3s/containerd processes
-  ansible.builtin.shell: |
-    /opt/cloudera/parcels/ECS/docker/docker container stop registry && \
-      /opt/cloudera/parcels/ECS/docker/docker container rm -v registry && \
-      /opt/cloudera/parcels/ECS/docker/docker image rm registry:2
-  ignore_errors: true
+# >> - name: UNINSTALL ECS | Kill docker processes
+# >>   ansible.builtin.shell: |
+# >>     /opt/cloudera/parcels/ECS/docker/docker container stop registry && \
+# >>       /opt/cloudera/parcels/ECS/docker/docker container rm -v registry && \
+# >>       /opt/cloudera/parcels/ECS/docker/docker image rm registry:2
+# >>   ignore_errors: true
 
 - name: Stop Experience cluster
+  delegate_to: "{{ groups.cloudera_manager | first }}"
+  run_once: true
   cm_api:
     endpoint: "/clusters/{{ cluster_name_pvc }}/commands/stop"
     method: POST
     timeout: "{{ cluster_restart_timeout | default(3000) }}"
   ignore_errors: true
 
-- name: Stop RKE2, K3s and containerd services
-  ansible.builtin.systemd:
-    name: "{{ item }}"
-    state: stopped
-  loop:
-    - rke2-server
-    - rke2-agent
-    - k3s-server
-    - k3s-agent
-    - containerd
-  ignore_errors: true
+# .. - name: UNINSTALL ECS | Stop RKE2, K3s and containerd services
+# ..   ansible.builtin.systemd:
+# ..     name: "{{ item }}"
+# ..     state: stopped
+# ..   loop:
+# ..     - rke2-server
+# ..     - rke2-agent
+# ..     - k3s-server
+# ..     - k3s-agent
+# ..     - containerd
+# ..   ignore_errors: true
 
-- name: Kill any lingering rke2/k3s/containerd processes
-  ansible.builtin.shell: |
-    pkill -f rke2 || true
-    pkill -f k3s || true
-    pkill -f containerd || true
-  args:
-    warn: false
+# >> - name: UNINSTALL ECS | Kill any lingering rke2/k3s/containerd processes
+# >>   become: true
+# >>   ansible.builtin.shell: |
+# >>     pkill -f rke2 || true
+# >>     pkill -f k3s || true
+# >>     pkill -f containerd || true
+# >>   ignore_errors: true
+# >>
+# >> - name: UNINSTALL ECS | Unmount busy mounts under /run
+# >>   become: true
+# >>   ansible.builtin.shell: |
+# >>     umount -l /run/k3s || true
+# >>     umount -l /run/containerd || true
+# >>   ignore_errors: true
+# >>
+# >> - name: UNINSTALL ECS | Run rke2 uninstall scripts if parcel exists
+# >>   become: true
+# >>   ansible.builtin.shell: |
+# >>     ./rke2-killall.sh
+# >>     ./rke2-uninstall.sh
+# >>   args:
+# >>     chdir: /opt/cloudera/parcels/ECS/bin
+# >>   ignore_errors: true
+# >>
+# >> - name: UNINSTALL ECS | Sanity-check for leftovers
+# >>   become: true
+# >>   ansible.builtin.shell: |
+# >>     test -d /var/lib/rancher && echo "⚠️ /var/lib/rancher still exists!"
+# >>     test -d /var/lib/kubelet  && echo "⚠️ /var/lib/kubelet still exists!"
+# >>   register: leftovers
+# >>   changed_when: false
+# >>   ignore_errors: true
 
-- name: Unmount busy mounts under /run
-  ansible.builtin.shell: |
-    umount -l /run/k3s || true
-    umount -l /run/containerd || true
-  args:
-    warn: false
-
-- name: Run rke2 uninstall scripts if parcel exists
-  ansible.builtin.shell: |
-    cd /opt/cloudera/parcels/ECS/bin
-    ./rke2-killall.sh
-    ./rke2-uninstall.sh
-  args:
-    chdir: /opt/cloudera/parcels/ECS/bin
-  when: ansible_stat.exists
-  vars:
-    ansible_stat:
-      path: /opt/cloudera/parcels/ECS/bin
-      get_checksum: no
-
-- name: Sanity-check for leftovers
-  ansible.builtin.shell: |
-    test -d /var/lib/rancher && echo "⚠️ /var/lib/rancher still exists!"
-    test -d /var/lib/kubelet  && echo "⚠️ /var/lib/kubelet still exists!"
-  register: leftovers
-  changed_when: false
-
-- name: Remove all storage directories
-  ansible.builtin.file:
-    path: "{{ item }}"
-    state: absent
-  loop:
-    - /var/lib/docker_server
-    - /etc/docker/certs.d
-    - "{{ docker_store }}"
-    - "{{ local_store }}"
-    - "{{ longhorn_store }}"
-    - /var/lib/iscsi
-    - /etc/cni
-    - /run/longhorn-iscsi.lock
-    - /var/lib/docker
-    - /var/log/containers
-    - /var/log/pods
+# .. - name: DEBUG - leftovers
+# ..   ansible.builtin.debug:
+# ..     var: leftovers
+# ..
+# .. - name: UNINSTALL ECS | Remove all storage directories
+# ..   become: true
+# ..   ansible.builtin.file:
+# ..     path: "{{ item }}"
+# ..     state: absent
+# ..   loop:
+# ..     - /var/lib/docker_server
+# ..     - /etc/docker/certs.d
+# ..     - /docker
+# ..     - /ecs
+# ..     - /var/lib/iscsi
+# ..     - /etc/cni
+# ..     - /run/longhorn-iscsi.lock
+# ..     - /var/lib/docker
+# ..     - /var/log/containers
+# ..     - /var/log/pods
+# ..     - /var/lib/rancher
+# ..     - /var/lib/kubelet
+# ..     - /etc/rancher
+# ..   ignore_errors: true
 
 - name: Delete Experience cluster
+  delegate_to: "{{ groups.cloudera_manager | first }}"
+  run_once: true
   cm_api:
     endpoint: "/clusters/{{ cluster_name_pvc }}"
     method: DELETE
@@ -145,47 +158,51 @@
   when: experience_already_exists
   ignore_errors: true
 
-- name: Reset iptables policies to ACCEPT
-  ansible.builtin.command: >
-    iptables -t {{ item.table }} -P {{ item.chain }} ACCEPT
-  loop:
-    - { table: filter, chain: INPUT }
-    - { table: filter, chain: FORWARD }
-    - { table: filter, chain: OUTPUT }
-    - { table: raw, chain: PREROUTING }
-    - { table: raw, chain: OUTPUT }
-    - { table: mangle, chain: PREROUTING }
-    - { table: mangle, chain: INPUT }
-    - { table: mangle, chain: FORWARD }
-    - { table: mangle, chain: OUTPUT }
-    - { table: mangle, chain: POSTROUTING }
-    - { table: security, chain: INPUT }
-    - { table: security, chain: FORWARD }
-    - { table: security, chain: OUTPUT }
-    - { table: nat, chain: PREROUTING }
-    - { table: nat, chain: INPUT }
-    - { table: nat, chain: OUTPUT }
-    - { table: nat, chain: POSTROUTING }
-
-- name: Flush and delete all other iptables chains
-  ansible.builtin.iptables:
-    table: "{{ item }}"
-    flush: yes
-    delete_chains: yes
-  loop:
-    - filter
-    - raw
-    - mangle
-    - security
-    - nat
-
-- name: Tear down docker0 interface
-  ansible.builtin.shell: |
-    ifconfig docker0 down || true
-    ip link delete docker0  || true
-
-- name: Reboot the system if necessary
-  ansible.builtin.reboot:
+# .. - name: UNINSTALL ECS | Reset iptables policies to ACCEPT
+# ..   become: true
+# ..   ansible.builtin.command: >
+# ..     iptables -t {{ item.table }} -P {{ item.chain }} ACCEPT
+# ..   loop:
+# ..     - { table: filter, chain: INPUT }
+# ..     - { table: filter, chain: FORWARD }
+# ..     - { table: filter, chain: OUTPUT }
+# ..     - { table: raw, chain: PREROUTING }
+# ..     - { table: raw, chain: OUTPUT }
+# ..     - { table: mangle, chain: PREROUTING }
+# ..     - { table: mangle, chain: INPUT }
+# ..     - { table: mangle, chain: FORWARD }
+# ..     - { table: mangle, chain: OUTPUT }
+# ..     - { table: mangle, chain: POSTROUTING }
+# ..     - { table: security, chain: INPUT }
+# ..     - { table: security, chain: FORWARD }
+# ..     - { table: security, chain: OUTPUT }
+# ..     - { table: nat, chain: PREROUTING }
+# ..     - { table: nat, chain: INPUT }
+# ..     - { table: nat, chain: OUTPUT }
+# ..     - { table: nat, chain: POSTROUTING }
+# ..   ignore_errors: true
+# ..
+# .. - name: UNINSTALL ECS | Flush and delete all other iptables chains
+# ..   become: true
+# ..   ansible.builtin.iptables:
+# ..     chain: "{{ item }}"
+# ..     flush: true
+# ..     state: absent
+# ..   loop:
+# ..     - filter
+# ..     - raw
+# ..     - mangle
+# ..     - security
+# ..     - nat
+# ..   ignore_errors: true
+# ..
+# .. - name: UNINSTALL ECS | Tear down docker0 interface
+# ..   ansible.builtin.shell: |
+# ..     ifconfig docker0 down || true
+# ..     ip link delete docker0  || true
+# ..   ignore_errors: true
+# ..
+# .. - meta: end_play
 
 ### Create Empty Experience cluster ###
 - name: DEBUG - hosts_exp
