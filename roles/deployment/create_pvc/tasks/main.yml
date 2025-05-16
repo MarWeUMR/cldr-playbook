@@ -1,5 +1,4 @@
 ---
-
 ### Add ECS hosts to the cluster ###
 # TODO: CHANGE this to be able to add hosts with auto-tls (retry with CM 7.6.5)
 # TODO: - Generate certs using certmanager ???
@@ -31,7 +30,7 @@
   when: debug | default(false)
 
 - name: Create host mappings
-  set_fact: 
+  set_fact:
     hosts_mapping: "{{ hosts_mapping | default([]) + host_details.json | community.general.json_query(query) }}"
   vars:
     query: "items[?hostname == '{{ item }}' ].{hostId: hostId, hostname: hostname}"
@@ -45,26 +44,98 @@
 ### Delete Experience cluster if already existing ###
 - name: Check about Experience cluster
   cm_api:
-    endpoint: /clusters 
+    endpoint: /clusters
     method: GET
     timeout: "{{ cluster_restart_timeout | default(3000) }}"
   register: all_clusters
 
-- set_fact: 
+- set_fact:
     experience_cluster_name: "{{ all_clusters.json | community.general.json_query(query) }}"
   vars:
     query: "items[?name == '{{ cluster_name_pvc }}' ].name"
 
-- set_fact: 
+- set_fact:
     experience_already_exists: "{{ false if experience_cluster_name == '' else true }}"
+
+- meta: end_play
+
+- name: Kill any lingering rke2/k3s/containerd processes
+  ansible.builtin.shell: |
+    /opt/cloudera/parcels/ECS/docker/docker container stop registry && \
+      /opt/cloudera/parcels/ECS/docker/docker container rm -v registry && \
+      /opt/cloudera/parcels/ECS/docker/docker image rm registry:2
+  ignore_errors: true
 
 - name: Stop Experience cluster
   cm_api:
     endpoint: "/clusters/{{ cluster_name_pvc }}/commands/stop"
     method: POST
     timeout: "{{ cluster_restart_timeout | default(3000) }}"
-  when: experience_already_exists
   ignore_errors: true
+
+- name: Stop RKE2, K3s and containerd services
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+  loop:
+    - rke2-server
+    - rke2-agent
+    - k3s-server
+    - k3s-agent
+    - containerd
+  ignore_errors: true
+
+- name: Kill any lingering rke2/k3s/containerd processes
+  ansible.builtin.shell: |
+    pkill -f rke2 || true
+    pkill -f k3s || true
+    pkill -f containerd || true
+  args:
+    warn: false
+
+- name: Unmount busy mounts under /run
+  ansible.builtin.shell: |
+    umount -l /run/k3s || true
+    umount -l /run/containerd || true
+  args:
+    warn: false
+
+- name: Run rke2 uninstall scripts if parcel exists
+  ansible.builtin.shell: |
+    cd /opt/cloudera/parcels/ECS/bin
+    ./rke2-killall.sh
+    ./rke2-uninstall.sh
+  args:
+    chdir: /opt/cloudera/parcels/ECS/bin
+  when: ansible_stat.exists
+  vars:
+    ansible_stat:
+      path: /opt/cloudera/parcels/ECS/bin
+      get_checksum: no
+
+- name: Sanity-check for leftovers
+  ansible.builtin.shell: |
+    test -d /var/lib/rancher && echo "⚠️ /var/lib/rancher still exists!"
+    test -d /var/lib/kubelet  && echo "⚠️ /var/lib/kubelet still exists!"
+  register: leftovers
+  changed_when: false
+
+- name: Remove all storage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - /var/lib/docker_server
+    - /etc/docker/certs.d
+    - "{{ docker_store }}"
+    - "{{ local_store }}"
+    - "{{ longhorn_store }}"
+    - /var/lib/iscsi
+    - /etc/cni
+    - /run/longhorn-iscsi.lock
+    - /var/lib/docker
+    - /var/log/containers
+    - /var/log/pods
 
 - name: Delete Experience cluster
   cm_api:
@@ -74,6 +145,48 @@
   when: experience_already_exists
   ignore_errors: true
 
+- name: Reset iptables policies to ACCEPT
+  ansible.builtin.command: >
+    iptables -t {{ item.table }} -P {{ item.chain }} ACCEPT
+  loop:
+    - { table: filter, chain: INPUT }
+    - { table: filter, chain: FORWARD }
+    - { table: filter, chain: OUTPUT }
+    - { table: raw, chain: PREROUTING }
+    - { table: raw, chain: OUTPUT }
+    - { table: mangle, chain: PREROUTING }
+    - { table: mangle, chain: INPUT }
+    - { table: mangle, chain: FORWARD }
+    - { table: mangle, chain: OUTPUT }
+    - { table: mangle, chain: POSTROUTING }
+    - { table: security, chain: INPUT }
+    - { table: security, chain: FORWARD }
+    - { table: security, chain: OUTPUT }
+    - { table: nat, chain: PREROUTING }
+    - { table: nat, chain: INPUT }
+    - { table: nat, chain: OUTPUT }
+    - { table: nat, chain: POSTROUTING }
+
+- name: Flush and delete all other iptables chains
+  ansible.builtin.iptables:
+    table: "{{ item }}"
+    flush: yes
+    delete_chains: yes
+  loop:
+    - filter
+    - raw
+    - mangle
+    - security
+    - nat
+
+- name: Tear down docker0 interface
+  ansible.builtin.shell: |
+    ifconfig docker0 down || true
+    ip link delete docker0  || true
+
+- name: Reboot the system if necessary
+  ansible.builtin.reboot:
+
 ### Create Empty Experience cluster ###
 - name: DEBUG - hosts_exp
   debug:
@@ -82,7 +195,7 @@
 
 - name: Create Experience cluster
   cm_api:
-    endpoint: /clusters 
+    endpoint: /clusters
     method: POST
     body: "{{ lookup('template', 'create_exp.json') }}"
     timeout: "{{ cluster_restart_timeout | default(3000) }}"
@@ -91,11 +204,11 @@
 - name: DEBUG - hosts_exp
   debug:
     msg: "{{ lookup('template', 'create_exp_719.json') }}"
-  when: debug | default(false) and cloudera_cdh_version is version('7.1.9','>=') 
+  when: debug | default(false) and cloudera_cdh_version is version('7.1.9','>=')
 
 - name: Create Experience cluster
   cm_api:
-    endpoint: /clusters 
+    endpoint: /clusters
     method: POST
     body: "{{ lookup('template', 'create_exp_719.json') }}"
     timeout: "{{ cluster_restart_timeout | default(3000) }}"
@@ -131,14 +244,13 @@
   pause:
     seconds: 15
 
-
 - name: Get ECS production name
   cm_api:
     endpoint: "/clusters/{{ cluster_name_pvc }}/parcels/"
     method: GET
     timeout: "{{ cluster_restart_timeout | default(3000) }}"
   register: parcels_answer
-  
+
 - name: DEBUG - parcels_answer url
   debug:
     msg: "{{ parcels_answer }}"
@@ -149,8 +261,8 @@
     pvc_product_name: "{{ parcels_answer.json | community.general.json_query(query) }}"
   vars:
     query: "items[?product == 'ECS'].version | [0]"
-  
-- name: DEBUG - pvc_product_name 
+
+- name: DEBUG - pvc_product_name
   debug:
     msg: "{{ pvc_product_name }}"
   when: debug | default(false)
@@ -202,7 +314,6 @@
   retries: 100
   delay: 30
 
-
 ### Prepare files for install ###
 - name: Create temporary file
   ansible.builtin.tempfile:
@@ -229,12 +340,10 @@
   set_fact:
     temp_ecs_file_content: "{{ lookup('file', temp_ecs_file.path ) }}"
 
-- name: DEBUG - temp_ecs_file_content 
+- name: DEBUG - temp_ecs_file_content
   debug:
     msg: "{{ temp_ecs_file_content }}"
   when: debug | default(false)
-
-
 
 ### Prepare files for destroy ###
 - name: Create temporary destroy file
@@ -261,11 +370,11 @@
   set_fact:
     temp_pvc_destroy_content: "{{ lookup('file', temp_pvc_destroy_file.path ) }}"
 
-- name: DEBUG - temp_pvc_destroy_content 
+- name: DEBUG - temp_pvc_destroy_content
   debug:
     msg: "{{ temp_pvc_destroy_content }}"
   when: debug | default(false)
-    
+
 - name: Remove temporary destroy_cp file
   ansible.builtin.file:
     path: "{{ temp_pvc_destroy_file.path }}"
@@ -283,9 +392,9 @@
 - set_fact:
     cp_uuid: "{{ control_planes_list.json | community.general.json_query(query) }}"
   vars:
-    query: "items[?namespace == '{{ cluster_name_pvc }}'].uuid | [0]"  
+    query: "items[?namespace == '{{ cluster_name_pvc }}'].uuid | [0]"
 
-- name: DEBUG - cp_uuid 
+- name: DEBUG - cp_uuid
   debug:
     msg: "{{ cp_uuid }}"
   when: debug | default(false)
@@ -297,10 +406,9 @@
     body: "{{ temp_pvc_destroy_content }}"
     timeout: "{{ cluster_restart_timeout | default(3000) }}"
   when: cp_uuid | length > 0
-  
 
 ### Start PvC ###
-  
+
 - name: Start PvC cluster
   cm_api:
     endpoint: /controlPlanes/commands/installEmbeddedControlPlane
@@ -315,7 +423,6 @@
     path: "{{ temp_ecs_file.path }}"
     state: absent
   when: temp_ecs_file.path is defined
-
 
 - name: Retry start command
   cm_api:
