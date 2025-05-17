@@ -17,13 +17,13 @@
 - name: Install nfs-utils package
   package:
     name: nfs-utils
-    state: latest
+    state: present
 
 # Required e2fsprog package
 - name: Install e2fsprogs package
   package:
     name: e2fsprogs
-    state: latest
+    state: present
 
 # Add PvC ECS server with dnsmasq as first dns for all other servers
 - name: Make /etc/resolv.conf editable
@@ -42,7 +42,7 @@
   shell: "cat /etc/hosts | grep -m 1 {{ pvc_ecs_server_host }} | cut -d' ' -f1 | xargs"
   register: pvc_ecs_server_host_ip
 
-- debug: 
+- debug:
     msg: "Insert into /etc/hosts line: {{ pvc_ecs_server_host_ip.stdout }} *.apps.{{ pvc_app_domain }}"
   when: debug | default(false)
 
@@ -51,3 +51,4 @@
     path: /etc/hosts
     line: "{{ pvc_ecs_server_host_ip.stdout }} *.apps.{{ pvc_app_domain }}"
   ignore_errors: true
+

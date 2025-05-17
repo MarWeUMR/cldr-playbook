@@ -27,83 +27,58 @@
 - name: Install JDK 11
   hosts: krb5_server
   become: yes
+  vars:
+    ipaserver_setup_dns: true
   roles:
     - prereqs/jdk
+  tasks:
+    - name: DEBUG - IP
+      debug:
+        msg: "{{ hostvars[groups['krb5_server'][0]]['ansible_default_ipv4']['address'] }}"
+
+    - name: DEBUG - IPA
+      debug:
+        var: ipaserver_setup_dns
   tags:
     - security
     - free_ipa
     - kerberos
     - tls
 
-- name: Install Kerberos Server
-  hosts: "krb5_server"
-  gather_facts: true
-  become: true
-  vars:
-    state: present
-    ipaserver_realm: "{{ krb5_realm }}"
-    ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
-    ipaserver_setup_firewalld: "no"
-    ipaserver_packages_dns: ["ipa-server-dns"]
-    ipaserver_setup_dns: true
-    ipaserver_allow_zone_overlap: true
-    ipaserver_auto_forwarders: true
-    ipaserver_auto_reverse: true
-    ipaserver_packages: ["ipa-server", "python3-libselinux"]
+- name: Install FreeIPA server
+  hosts: krb5_server
+  become: yes
   roles:
-    - role: cloudera.cluster.infrastructure.krb5_server
+    - role: freeipa.ansible_freeipa.ipaserver
+      state: present
+      ipaserver_realm: "{{ krb5_realm }}"
+      ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
+      ipaserver_setup_firewalld: "no"
+      ipaserver_packages_dns: ["ipa-server-dns"]
+      ipaserver_setup_dns: true
+      ipaserver_allow_zone_overlap: true
+      ipaserver_auto_forwarders: true
+      ipaserver_auto_reverse: true
+      when: "krb5_kdc_type == 'Red Hat IPA'"
+  tags:
+    - security
+    - kerberos
+    - tls
 
-- name: Setup KRB5 clients
-  hosts: cloudera_manager:cluster
-  gather_facts: true
-  become: true
-  vars:
-    ipaclient_packages: ["ipa-client", "python3-libselinux"]
-    state: present
-    ipaserver_realm: "{{ krb5_realm }}"
-    ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
-    ipaclient_servers: "{{ groups['krb5_server'] }}"
-    ipaclient_configure_dns_resolver: true
-    ipaclient_dns_servers:
-      - "{{ hostvars[groups['krb5_server'][0]]['ansible_default_ipv4']['address'] }}"
-      - 8.8.8.8
-  roles:
-    - role: cloudera.cluster.infrastructure.krb5_client
-      when: krb5_kdc_host is defined or 'krb5_server' in groups
-# - name: Install FreeIPA server
-#   hosts: krb5_server
-#   become: yes
-#   roles:
-#     - role: freeipa.ansible_freeipa.ipaserver
-#       state: present
-#       ipaserver_realm: "{{ krb5_realm }}"
-#       ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
-#       ipaserver_setup_firewalld: "no"
-#       ipaserver_packages_dns: ["ipa-server-dns"]
-#       ipaserver_setup_dns: true
-#       ipaserver_allow_zone_overlap: true
-#       ipaserver_auto_forwarders: true
-#       ipaserver_auto_reverse: true
-#       when: "krb5_kdc_type == 'Red Hat IPA'"
-#   tags:
-#     - security
-#     - kerberos
-#     - tls
-#
 - name: Setup FreeIPA clients
   hosts: cloudera_manager:cluster
   become: yes
-  #   roles:
-  #     - role: freeipa.ansible_freeipa.ipaclient
-  #       state: present
-  #       ipaserver_realm: "{{ krb5_realm }}"
-  #       ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
-  #       ipaclient_servers: "{{ groups['krb5_server'] }}"
-  #       ipaclient_configure_dns_resolver: true
-  #       ipaclient_dns_servers:
-  #         - "{{ hostvars[groups['krb5_server'][0]]['ansible_default_ipv4']['address'] }}"
-  #         - 8.8.8.8
-  #       when: "krb5_kdc_type == 'Red Hat IPA' and 'krb5_server' in groups"
+  roles:
+    - role: freeipa.ansible_freeipa.ipaclient
+      state: present
+      ipaserver_realm: "{{ krb5_realm }}"
+      ipaserver_domain: "{{ krb5_domain | default(krb5_realm | lower) }}"
+      ipaclient_servers: "{{ groups['krb5_server'] }}"
+      ipaclient_configure_dns_resolver: true
+      ipaclient_dns_servers:
+        - "{{ hostvars[groups['krb5_server'][0]]['ansible_default_ipv4']['address'] }}"
+        - 8.8.8.8
+      when: "krb5_kdc_type == 'Red Hat IPA' and 'krb5_server' in groups"
   tasks:
     - name: Set sssd to enumerate users and groups
       lineinfile:
@@ -119,7 +94,99 @@
       service:
         name: sssd
         state: restarted
-#   tags:
-#     - security
-#     - kerberos
-#     - tls
+  tags:
+    - security
+    - kerberos
+    - tls
+
+- name: Ensure A records are present
+  hosts: all
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Gather facts
+      ansible.builtin.setup:
+        gather_subset:
+          - "default_ipv4"
+      delegate_to: "{{ nodes_ip_collect_item }}"
+      delegate_facts: true
+      loop: "{{ groups['all'] }}"
+      loop_control:
+        loop_var: nodes_ip_collect_item
+
+- name: Ensure A records are present
+  hosts: krb5_server
+  become: true
+  gather_facts: true
+
+  tasks:
+    - set_fact:
+        ecs_server_ip: "{{ hostvars[groups.pvc_hosts | first].ansible_facts.default_ipv4.address }}"
+
+    - name: Ensure DNS zones are present
+      community.general.ipa_dnszone:
+        ipa_host: "{{ groups.krb5_server | first }}"
+        ipa_pass: "{{ default_password }}"
+        ipa_user: "admin"
+        state: present
+        zone_name: "{{ item }}"
+      register: result
+      ignore_errors: true
+      failed_when:
+        - "result.failed and 'already exists' not in result.msg"
+        - "result.failed and 'no modifications to be performed' not in result.msg"
+      loop:
+        - "{{ krb5_realm | lower }}"
+        - "apps.{{ krb5_realm | lower }}"
+
+    - name: Ensure wildcard record is prepared for PvC ECS
+      community.general.ipa_dnsrecord:
+        ipa_host: "{{ groups.krb5_server | first }}"
+        ipa_pass: "{{ default_password }}"
+        ipa_user: "admin"
+        state: present
+        zone_name: "{{ __dns_record_item }}"
+        record_name: "*"
+        record_type: A
+        record_value: "{{ ecs_server_ip }}"
+      loop:
+        - "apps.{{ krb5_realm | lower }}"
+      loop_control:
+        loop_var: __dns_record_item
+      register: result
+      ignore_errors: true
+      failed_when:
+        - "result.failed and 'already exists' not in result.msg"
+        - "result.failed and 'no modifications to be performed' not in result.msg"
+
+    - name: Ensure that 'host1' has A and AAAA records.
+      freeipa.ansible_freeipa.ipadnsrecord:
+        ipaadmin_password: "{{ default_password }}"
+        zone_name: "{{ krb5_realm }}"
+        records:
+          - name: "manager"
+            a_ip_address: "{{ hostvars[groups['cloudera_manager'][0]].ansible_default_ipv4.address }}"
+          - name: "heavy"
+            a_ip_address: "{{ hostvars[groups['cluster_master_nodes'][0]].ansible_default_ipv4.address }}"
+          - name: "master1"
+            a_ip_address: "{{ hostvars[groups['cluster_master_nodes'][1]].ansible_default_ipv4.address }}"
+          - name: "master2"
+            a_ip_address: "{{ hostvars[groups['cluster_worker_nodes'][0]].ansible_default_ipv4.address }}"
+          - name: "hbase-worker1"
+            a_ip_address: "{{ hostvars[groups['cluster_worker_nodes'][1]].ansible_default_ipv4.address }}"
+          - name: "hbase-worker2"
+            a_ip_address: "{{ hostvars[groups['cluster_worker_nodes'][2]].ansible_default_ipv4.address }}"
+          - name: "kerberos"
+            a_ip_address: "{{ hostvars[groups['krb5_server'][0]].ansible_default_ipv4.address }}"
+          - name: "ecs1"
+            a_ip_address: "{{ hostvars[groups['pvc_hosts'][0]].ansible_default_ipv4.address }}"
+          - name: "ecs2"
+            a_ip_address: "{{ hostvars[groups['pvc_hosts'][1]].ansible_default_ipv4.address }}"
+          - name: "ecs3"
+            a_ip_address: "{{ hostvars[groups['pvc_hosts'][2]].ansible_default_ipv4.address }}"
+          - name: "ecs4"
+            a_ip_address: "{{ hostvars[groups['pvc_hosts'][3]].ansible_default_ipv4.address }}"
+
+      delegate_to: "{{ groups.krb5_server | first }}"
+      run_once: true

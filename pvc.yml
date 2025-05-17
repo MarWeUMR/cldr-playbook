@@ -50,15 +50,15 @@
       debug:
         var: nameserver_ip
 
-- name: Create a dns and dns-entry for ECS on all PvC servers
-  hosts: pvc_hosts
-  become: yes
-  roles:
-    - role: prereqs/pvc_ecs_dns
-      when: pvc_type == "ECS"
-  tags:
-    - os
-    - network
+# - name: Create a dns and dns-entry for ECS on all PvC servers
+#   hosts: pvc_hosts
+#   become: yes
+#   roles:
+#     - role: prereqs/pvc_ecs_dns
+#       when: pvc_type == "ECS"
+#   tags:
+#     - os
+#     - network
 
 - name: Apply specific pre-requisites for ECS
   hosts: pvc_hosts
@@ -69,7 +69,7 @@
   tags:
     - os
 
-- name: Enable a PvC-ECS cluster
+- name: Uninstall previous PvC-ECS cluster
   hosts: pvc_hosts
   gather_facts: no
   tasks:
@@ -92,10 +92,10 @@
         name: firewalld
         state: stopped
 
-    - name: Ensure firewall is off
-      ansible.builtin.systemd:
-        name: dnsmasq
-        state: started
+        # - name: Ensure DNSmasq is running
+    #   ansible.builtin.systemd:
+    #     name: dnsmasq
+    #     state: started
 
 - name: Enable a PvC-ECS cluster
   hosts: cloudera_manager
